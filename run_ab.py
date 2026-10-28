@@ -76,9 +76,10 @@ def wait_ready(timeout: float = 15.0) -> None:
     raise RuntimeError("DSP server 未在超时内启动")
 
 
-def run_arm(strategy: str, n: int, seed: int = 42) -> dict:
-    """跑一组实验：fixed 或 ocpc"""
-    dsp_server.configure(strategy=strategy, total_budget=BUDGET, target_cpa=3.0)
+def run_arm(strategy: str, n: int, seed: int = 42, reset: bool = True) -> dict:
+    """跑一组实验：fixed 或 ocpc；reset=False 时沿用现有参数（供 Agent 在线调参实验）"""
+    if reset:
+        dsp_server.configure(strategy=strategy, total_budget=BUDGET, target_cpa=3.0)
     rng = random.Random(seed)
     stats = {"req": 0, "bid": 0, "win": 0, "clk": 0, "cvr": 0, "timeout": 0, "no_bid": 0}
     t0 = time.time()
@@ -118,6 +119,7 @@ def run_arm(strategy: str, n: int, seed: int = 42) -> dict:
         requests.get(f"{BASE}/win", params={"req_id": req["id"], "price": clearing}, timeout=0.5)
 
         if rng.random() < pctr_true:  # 已知真实 pCTR 驱动的点击仿真
+            time.sleep(rng.uniform(0.06, 0.25))  # 仿真用户浏览时延（时间压缩）
             stats["clk"] += 1
             requests.get(f"{BASE}/clk", params={"req_id": req["id"]}, timeout=0.5)
             if rng.random() < 0.15:   # 点击后转化

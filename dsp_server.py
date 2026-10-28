@@ -26,6 +26,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 
 from budget import BudgetController
+from ledger import ConcurrentBudgetLedger
 
 MODEL_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -40,11 +41,12 @@ def configure(strategy: str = "ocpc", total_budget: float = 0.6,
     STATE.clear()
     STATE.update({
         "strategy": strategy,
-        "budget": BudgetController(total_budget=total_budget),
+        "budget": ConcurrentBudgetLedger(total_budget),
         "target_cpa": target_cpa,
         "use_model": use_model,
         "pctr": None, "pcvr": None,
         "bids": {},                # req_id -> 出价上下文
+        "events": [],              # 事件流（生产中发 Kafka，本 Demo 内存队列）
         "kp": 1.2,                 # PID 比例系数
         "pid_i": 0.0,              # 积分项
         "start_ts": time.time(),
@@ -100,7 +102,13 @@ async def bid(req: Dict[str, Any]):
     if bid_cpm < floor * 1.05:                     # 低于底价放弃
         return JSONResponse({"id": req_id, "seatbid": [], "nbr": 2})
 
-    s["bids"][req_id] = {"cpm": bid_cpm, "pctr": pctr, "pcvr": pcvr, "ts": time.time()}
+    # 并发安全预扣（in-flight）：余量不足则不出价，防多线程超卖
+    if not budget.reserve(req_id, bid_cpm):
+        return JSONResponse({"id": req_id, "seatbid": [], "nbr": 1})
+
+    s["bids"][req_id] = {"cpm": bid_cpm, "pctr": pctr, "pcvr": pcvr, "ts": time.time(),
+                         "os": sample["os"], "geo": sample["region"],
+                         "user": (req.get("user") or {}).get("id", "?")}
     return {
         "id": req_id,
         "seatbid": [{"seat": "dsp-sim", "bid": [{
@@ -115,14 +123,18 @@ async def bid(req: Dict[str, Any]):
 
 def _event(req_id: str, kind: str) -> Dict[str, Any]:
     ctx = STATE["bids"].get(req_id) or {"cpm": 0.0, "pctr": 0.0, "pcvr": 0.0}
+    evt = {"type": kind, "req_id": req_id, "ts": time.time(),
+           "os": ctx.get("os", "?"), "geo": ctx.get("geo", "?"),
+           "user": ctx.get("user", "?")}
     if kind == "win":
         ctx["win"] = True
-        STATE["budget"].commit_spend(req_id, ctx["cpm"])
+        evt["price"] = STATE["budget"].settle(req_id, ctx["cpm"])
     elif kind == "clk":
         ctx["clk"] = True
     elif kind == "cvr":
         ctx["cvr"] = True
     STATE["bids"][req_id] = ctx
+    STATE.setdefault("events", []).append(evt)
     return {"ok": True, "event": kind}
 
 
@@ -139,6 +151,24 @@ async def clk(req_id: str):
 @app.get("/cvr")
 async def cvr(req_id: str):
     return _event(req_id, "cvr")
+
+
+@app.post("/tune")
+async def tune(target_cpa: Optional[float] = None, kp: Optional[float] = None):
+    """控制面动态调参入口（P3 Agent 在线调优走这里，竞价面零重启）"""
+    if target_cpa is not None:
+        STATE["target_cpa"] = max(0.1, float(target_cpa))
+    if kp is not None:
+        STATE["kp"] = max(0.0, min(3.0, float(kp)))
+    return {"ok": True, "target_cpa": STATE["target_cpa"], "kp": STATE["kp"]}
+
+
+@app.get("/events")
+async def events():
+    """导出事件流（post-auction 管线 / Agent 控制面消费）"""
+    STATE["budget"].sweep()  # 顺带触发过期 in-flight 冲正
+    return {"events": STATE.get("events", []),
+            "ledger": STATE["budget"].snapshot()}
 
 
 @app.get("/stats")
@@ -158,6 +188,7 @@ async def stats():
         "exhausted": s["budget"].is_exhausted,
         "avg_bid": round(sum(b["cpm"] for b in wins) / max(len(wins), 1), 4),
         "avg_pctr": round(sum(b["pctr"] for b in wins) / max(len(wins), 1), 6),
+        "in_flight": STATE["budget"].in_flight,
     }
 
 

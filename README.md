@@ -52,6 +52,30 @@ python run_ab.py      # FastAPI 服务化 + 同流量 A/B 对比（fixed vs ocpc
   A 组固定 CPM 出价，B 组 oCPC（`目标CPA × pCTR × pCVR × 1000`），
   输出对比报表。示例结果：CTR +27%，CPA -59%（仿真数据）
 
+### P2：工程架构（并发预算 / 压测 / Post-Auction 管线）
+
+```bash
+python bench.py 600 8   # /bid 延迟压测：P99 延迟、容量估算、延迟预算分解（SLA 100ms）
+```
+
+- `ledger.py`：并发安全预算账本，扣减三阶段 `reserve -> settle/reverse`
+  （in-flight 预扣防超卖、超时冲正），内附生产环境 Redis+Lua 原子脚本映射
+- `post_auction.py`：IVT 反作弊规则引擎（重复点击/速度异常/频次超限/地域 CTR 离群）
+  + 转化归因（last-click / linear MTA，7 天窗口）
+- 压测参考结果：P99 ≈ 30ms（SLA 100ms 通过），单实例 ~700 QPS 本机回环
+
+### P3：LangGraph Multi-Agent 控制面
+
+```bash
+python agent_control.py   # Agent 调参前后两轮投放对比 + 决策日志
+```
+
+- `agent_control.py`：LangGraph 编排 `analyze -> tune -> apply` 三节点控制面
+  （预算 Agent / Pacing Agent / 风控 Agent），通过 `/tune` 端点热更新 DSP 参数
+- **核心设计论点：LLM/Agent 只进控制面，绝不进竞价关键路径**——
+  100ms 竞价超时内等不起一次 LLM 推理；本 Demo Agent 为规则驱动占位
+  （零 LLM 成本、结果可复现），替换为 LLM 调用即可，图结构不变
+
 运行结束会输出一份仿真报表，包含：请求数、竞价数、胜出数、曝光数、
 转化数、总花费、CPM、CPC、CPA、CTR、CVR 等核心指标。
 
