@@ -1,3 +1,8 @@
 # sim-dsp-agent dependencies
-# 仅需 requests（协议字段示意/未来对接真实接口时使用），其余全部使用标准库
+# 基础仿真（main.py）：仅 requests
+# 服务化 + 出价模型（dsp_server.py / model.py / run_ab.py）
 requests>=2.28.0
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+scikit-learn>=1.3.0
+numpy>=1.24.0

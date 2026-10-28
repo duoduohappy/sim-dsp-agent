@@ -34,8 +34,23 @@ MockExchange(仿真流量)          BiddingAgent(智能体)          BudgetContr
 
 ```bash
 pip install -r requirements.txt
-python main.py
+python main.py        # 轻量仿真（进程内，秒级跑完）
 ```
+
+### 进阶：DSP 服务化 + 出价模型 + A/B 对比（P0+P1）
+
+```bash
+python model.py       # 训练 pCTR/pCVR 出价模型（支持真实 iPinYou 数据集，见下）
+python run_ab.py      # FastAPI 服务化 + 同流量 A/B 对比（fixed vs ocpc）
+```
+
+- `dsp_server.py`：FastAPI 实现的 OpenRTB 2.5 竞价服务（`POST /bid` 100ms 超时、
+  `/win` `/clk` `/cvr` 事件回传、`/stats` 指标），内置 PID 预算 pacing
+- `model.py`：pCTR/pCVR 逻辑回归模型。默认自动生成 iPinYou 风格合成数据开箱即跑；
+  若将真实 iPinYou 数据集（含 `click` 列的 csv/tsv）放入 `data/ipinyou/` 目录则自动加载
+- `run_ab.py`：同一带早晚高峰 QPS 曲线的仿真流量分别打两组策略，
+  A 组固定 CPM 出价，B 组 oCPC（`目标CPA × pCTR × pCVR × 1000`），
+  输出对比报表。示例结果：CTR +27%，CPA -59%（仿真数据）
 
 运行结束会输出一份仿真报表，包含：请求数、竞价数、胜出数、曝光数、
 转化数、总花费、CPM、CPC、CPA、CTR、CVR 等核心指标。
