@@ -4,7 +4,7 @@
 
 DSP + AI Agent 程序化广告竞价仿真 Demo（DSP Programmatic Advertising + AI Agent Dynamic Bidding Simulation）。
 
-> ⚠️ 本项目**仅用于技术学习与面试演示**：
+> ⚠️ 本项目**仅用于技术学习与演示**：
 > - 不接入任何真实 AdX / SSP 广告流量
 > - 不产生任何真实广告花费
 > - 不可用于生产环境
